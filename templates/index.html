@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>SSH 控制面板</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="container">
+    <h1>SSH 指令執行介面</h1>
+    <input id="cmdInput" type="text" placeholder="輸入指令，例如 ls -l">
+    <button onclick="runCommand()">執行</button>
+
+    <pre id="output"></pre>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>

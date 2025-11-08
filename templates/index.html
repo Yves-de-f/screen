@@ -1,17 +1,47 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>SSH 控制面板</title>
+  <title>SSH GUI Terminal</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+  <script src="https://cdn.socket.io/4.7.1/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/interactjs/dist/interact.min.js"></script>
 </head>
 <body>
-  <div class="container">
-    <h1>SSH 指令執行介面</h1>
-    <input id="cmdInput" type="text" placeholder="輸入指令，例如 ls -l">
-    <button onclick="runCommand()">執行</button>
 
-    <pre id="output"></pre>
+  <div id="tmux-bar">
+    <div id="tmux-controls">
+      <input type="text" id="tmuxNewName" placeholder="New window name">
+      <button onclick="tmuxNew()">New</button>
+      <button onclick="tmuxList()">Refresh</button>
+    </div>
+    <div id="tmux-window-list">
+      </div>
+  </div>
+
+  <div id="terminal-window" class="draggable resizable">
+    <header class="window-header">
+      SSH GUI Terminal
+    </header>
+    
+    <section id="ssh-connection">
+      <label>常用節點:
+        <select id="commonHosts" onchange="selectCommonHost()">
+          <option value="">--選擇--</option>
+          <option value="twnia3.nchc.org.tw">Taiwania 3</option>
+          <option value="其他節點1">其他節點1</option>
+        </select>
+      </label>
+
+      <input type="text" id="sshHost" placeholder="host">
+      <input type="text" id="sshUser" placeholder="user">
+      <button id="connectButton" onclick="connectSSH()">連線</button>
+      <button id="disconnectButton" onclick="disconnectSSH()">斷線</button>
+    </section>
+
+    <div id="terminal" style="height:400px; width:100%;"></div>
   </div>
 
   <script src="{{ url_for('static', filename='js/script.js') }}"></script>

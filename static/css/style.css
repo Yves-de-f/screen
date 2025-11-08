@@ -22,6 +22,8 @@ body {
     display: flex;
     align-items: center;
     z-index: 1000;
+    /* 【新增】 讓 transition 更平滑 */
+    transition: opacity 0.3s ease;
 }
 #tmux-controls {
     padding-right: 15px;
@@ -88,6 +90,8 @@ body {
     /* 修正 xterm.js 縮放問題 */
     width: auto !important;
     height: auto !important;
+    /* 【新增】 確保終端機在 flex 容器中正確縮放 */
+    overflow: hidden; 
 }
 
 /* --- 【【【 新增：Interact.js 樣式 】】】 --- */
@@ -96,4 +100,11 @@ body {
     overflow: hidden; /* 隱藏內部的 resize */
     min-width: 400px; /* 最小寬度 */
     min-height: 200px; /* 最小高度 */
+}
+
+/* 【【【 新增：淡化 tmux bar 】】】 */
+#tmux-bar.disabled {
+    opacity: 0.4;
+    pointer-events: none;
+    user-select: none;
 }

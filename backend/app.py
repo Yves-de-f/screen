@@ -1,4 +1,3 @@
-
 import os
 import pty
 import signal
@@ -94,10 +93,7 @@ ALLOWED_HOSTS = {
 
 def read_and_forward_ssh_output(sid):
     """
-    【【重構】】
-    背景讀取任務。
-    它的唯一職責是讀取和轉發。
-    當它結束時 (正常退出或出錯)，它會*請求*清理。
+    (此函數完全不變)
     """
     print(f"Read task starting for {sid}...")
     try:
@@ -132,8 +128,7 @@ def read_and_forward_ssh_output(sid):
 
 def cleanup_session(sid, from_read_task=False):
     """
-    【【重構 4.0】】
-    加入 Ctrl+C (b'\x03') 作為第一道溫和中斷
+    (此函數完全不變)
     """
     session = ssh_sessions.pop(sid, None)
     
@@ -172,7 +167,7 @@ def cleanup_session(sid, from_read_task=False):
     print(f"Cleanup: Successfully cleaned up {sid} (PID {pid})")
 
     if from_read_task:
-        msg = '\r\n[Connection closed by remote]\r\n'
+        msg = '\r\n[Connection closed by remote]\r/n'
     else:
         msg = '\r\n[Connection closed by user]\r\n'
         
@@ -181,7 +176,7 @@ def cleanup_session(sid, from_read_task=False):
 
 @socketio.on('connect')
 def on_connect():
-    """(已在安全審查中修復)"""
+    """(此函數完全不變)"""
     token = request.cookies.get('token') 
     if not token:
         print("Client connected without token. Disconnecting.")
@@ -197,8 +192,7 @@ def on_connect():
 @socketio.on('disconnect')
 def on_disconnect():
     """
-    【【重構】】
-    當 SocketIO 連線中斷時 (例如關閉分頁或網路問題)
+    (此函數完全不變)
     """
     sid = request.sid
     print(f"Client {sid} disconnected (SocketIO).")
@@ -207,7 +201,7 @@ def on_disconnect():
 
 @socketio.on('ssh_connect')
 def ssh_connect(data):
-    """【【重構】】"""
+    """(此函數完全不變)"""
     sid = request.sid
     if sid in ssh_sessions:
         socketio.emit('ssh_output', '\r\n[Already connected]\r\n', to=sid)
@@ -266,7 +260,7 @@ def ssh_connect(data):
 
 @socketio.on('ssh_input')
 def ssh_input(data):
-    """【【重構】】"""
+    """(此函數完全不變)"""
     # 使用 .get() 來安全地獲取 session
     # 如果 session 剛好被清理，.get() 會返回 None，就不會執行
     session = ssh_sessions.get(request.sid)
@@ -281,8 +275,7 @@ def ssh_input(data):
 @socketio.on('ssh_disconnect')
 def ssh_disconnect():
     """
-    【【重構】】
-    處理來自前端的斷線「請求」。
+    (此函數完全不V變)
     """
     sid = request.sid
     print(f"Client {sid} requested SSH disconnect.")
@@ -293,7 +286,7 @@ def ssh_disconnect():
 
 def run_ssh_control_command(sid, tmux_command):
     """
-    輔助函數：使用 Control Socket 執行一個「非互動式」指令
+    (此函數完全不變)
     """
     session = ssh_sessions.get(sid)
     if not session:
@@ -331,6 +324,7 @@ def run_ssh_control_command(sid, tmux_command):
 @socketio.on('tmux_control')
 def tmux_control(data):
     """
+    【【【 此函數已更新 】】】
     處理來自前端的所有 tmux GUI 指令
     """
     sid = request.sid
@@ -339,15 +333,47 @@ def tmux_control(data):
     if not action:
         return
 
+    # 【【【【【【 關鍵修復 】】】】】】
+    # 確保伺服器啟動「並且」至少有一個會話存在
+    # 1. 啟動伺服器 (如果已在運作則無害)
+    # 2. 檢查是否有會話 (has-session)，隱藏 "no server" 錯誤
+    # 3. 如果 (||) 檢查失敗 (沒有會話)，則建立一個新的分離 (detached) 會話
+    # 4. 只有在 (&&) 上述都成功後，才執行後續指令
+    tmux_base_cmd = "tmux start-server ; (tmux has-session 2>/dev/null || tmux new-session -d) && "
     tmux_command = ""
+
     if action == 'list':
         # -F 指定格式： 
         # 0:bash (window_id:window_name)
         tmux_command = "tmux list-windows -F '#{window_id}:#{window_name}'"
     
     elif action == 'new':
-        name = data.get('name', 'new-window')
-        # shlex.quote 確保名稱是安全的
+        name = data.get('name', '').strip() # 獲取名稱，並去除空白
+
+        # 【【【 數字命名邏輯 (不變) 】】】
+        if not name:
+            # 1. 執行 list-windows 獲取現有名稱
+            list_cmd = tmux_base_cmd + "tmux list-windows -F '#{window_name}'"
+            list_result = run_ssh_control_command(sid, list_cmd)
+            
+            existing_names = []
+            if "output" in list_result and list_result['output']:
+                existing_names = list_result['output'].split('\n')
+                
+            # 2. 找出所有「數字名稱」
+            numeric_names = set()
+            for n in existing_names:
+                if n.isdigit():
+                    numeric_names.add(int(n))
+            
+            # 3. 找出下一個可用的數字 (從 0 開始)
+            new_name_int = 0
+            while new_name_int in numeric_names:
+                new_name_int += 1
+            
+            name = str(new_name_int) # 找到了！
+        
+        # 繼續執行 new-window 指令
         tmux_command = f"tmux new-window -n {shlex.quote(name)} -d -P -F '#{{window_id}}:#{{window_name}}'"
         
     elif action == 'select':
@@ -359,11 +385,21 @@ def tmux_control(data):
     else:
         return # Unknown action
 
-    # 執行指令
-    result = run_ssh_control_command(sid, tmux_command)
+    # 【【【 修改：組合指令 】】】
+    full_command = tmux_base_cmd + tmux_command
+    result = run_ssh_control_command(sid, full_command) # 執行組合後的指令
 
     if "error" in result:
-        socketio.emit('ssh_output', f"\r\n[TMUX Error: {result['error']}]\r\n", to=sid)
+        # 【【【 修改：過濾掉良性的 "no server" 錯誤 】】】
+        # (雖然 base_cmd 應該已處理，但多一層保險)
+        err_msg = result['error']
+        if "no server" in err_msg or "no session" in err_msg:
+             # 這是 base_cmd 剛啟動伺服器時的正常情況，我們重試 list
+             if action != 'list': # 避免無限迴圈
+                 tmux_control({'action': 'list'})
+             return
+        
+        socketio.emit('ssh_output', f"\r\n[TMUX Error: {err_msg}]\r\n", to=sid)
         return
 
     # 如果是 list, 回傳列表

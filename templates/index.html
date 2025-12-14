@@ -8,7 +8,6 @@
     <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
     <script src="https://cdn.socket.io/4.7.1/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/interactjs/dist/interact.min.js"></script>
-    
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
 </head>
 <body>
@@ -23,9 +22,10 @@
       </div>
   </div>
 
-  <div id="terminal-window" class="draggable resizable">
+  <div id="master-terminal-window" class="terminal-window draggable resizable">
     <header class="window-header">
-      SSH GUI Terminal
+      <span class="window-title">Master Control Terminal</span>
+      <button class="window-minimize-btn" aria-label="Minimize">_</button>
     </header>
     
     <section id="ssh-connection">
@@ -43,10 +43,9 @@
       <button id="disconnectButton">斷線</button>
     </section>
 
-    <div id="terminal"></div>
-
+    <div id="master-terminal" class="terminal-container"></div>
   </div>
-
+  
   <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>

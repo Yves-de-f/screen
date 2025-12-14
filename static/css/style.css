@@ -4,13 +4,12 @@ body {
     font-family: Arial, sans-serif;
     background-color: #1e1e1e;
     color: #f5f5f5;
-    /* 【新增】 移除邊界，讓視窗可以貼齊 */
     margin: 0;
     padding: 0;
     overflow: hidden; /* 隱藏捲軸 */
 }
 
-/* --- 【【【 新增：TMUX BAR 樣式 】】】 --- */
+/* --- TMUX BAR 樣式 --- */
 #tmux-bar {
     position: fixed;
     bottom: 0;
@@ -22,8 +21,9 @@ body {
     display: flex;
     align-items: center;
     z-index: 1000;
-    /* 【新增】 讓 transition 更平滑 */
     transition: opacity 0.3s ease;
+    min-height: 25px; 
+    box-sizing: border-box;
 }
 #tmux-controls {
     padding-right: 15px;
@@ -47,64 +47,127 @@ body {
 .tmux-window-btn:hover {
     background-color: #555;
 }
-
-
-/* --- 【【【 新增：視窗化樣式 】】】 --- */
-#terminal-window {
-    /* 【修改】 讓它可以被 JS 定位和縮放 */
-    position: absolute;
-    top: 20px;
-    left: 20px;
-    width: 800px; /* 預設寬度 */
-    border: 1px solid #555;
-    background-color: #2a2a2a;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-    /* 讓 terminal 填滿 */
-    display: flex;
-    flex-direction: column;
-}
-
-.window-header {
-    background-color: #3c3c3c;
-    padding: 8px;
-    cursor: move; /* 【重要】 讓 interact.js 知道這裡是拖曳點 */
-    border-bottom: 1px solid #555;
-    user-select: none;
-}
-
-#ssh-connection {
-    margin-bottom: 10px;
-    /* 【修改】 */
-    padding: 10px;
-    background-color: #2a2a2a;
-}
-
-#ssh-connection input, #ssh-connection select {
-    margin-right: 5px;
-}
-
-#terminal {
-    background-color: #000;
-    /* 【修改】 讓 terminal 填滿剩餘空間 */
-    flex-grow: 1;
-    /* 修正 xterm.js 縮放問題 */
-    width: auto !important;
-    height: auto !important;
-    /* 【新增】 確保終端機在 flex 容器中正確縮放 */
-    overflow: hidden; 
-}
-
-/* --- 【【【 新增：Interact.js 樣式 】】】 --- */
-.resizable {
-    resize: both; /* 顯示瀏覽器原生縮放圖示 (雖然我們會用 JS) */
-    overflow: hidden; /* 隱藏內部的 resize */
-    min-width: 400px; /* 最小寬度 */
-    min-height: 200px; /* 最小高度 */
-}
-
-/* 【【【 新增：淡化 tmux bar 】】】 */
 #tmux-bar.disabled {
     opacity: 0.4;
     pointer-events: none;
     user-select: none;
+}
+
+
+/* --- 視窗化樣式 (基礎) --- */
+.terminal-window {
+    position: absolute;
+    width: 800px;
+    height: 450px;
+    border: 1px solid #555;
+    background-color: #2a2a2a;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    resize: both; 
+    overflow: hidden;
+    min-width: 400px;
+    min-height: 200px;
+    transition: all 0.3s ease;
+}
+
+/* --- 主控台視窗 --- */
+#master-terminal-window {
+    top: 20px;
+    left: 20px;
+    z-index: 99;
+}
+#master-terminal-window .window-close-btn {
+    display: none;
+}
+
+/* --- 動態視窗 --- */
+.dynamic-terminal-window {
+    top: 60px;
+    left: 60px;
+}
+
+/* --- 視窗標題列 --- */
+.window-header {
+    background-color: #3c3c3c;
+    padding: 8px;
+    cursor: move; 
+    border-bottom: 1px solid #555;
+    user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.window-title {
+    flex-grow: 1;
+}
+
+/* --- 視窗按鈕 (最小化/關閉) --- */
+.window-close-btn, .window-minimize-btn {
+    background: #ff5f56;
+    border: 1px solid #e04440;
+    border-radius: 50%;
+    width: 12px;
+    height: 12px;
+    cursor: pointer;
+    padding: 0;
+    margin-left: 8px;
+}
+.window-minimize-btn {
+    background: #ffbd2e;
+    border-color: #dea123;
+    line-height: 10px;
+    font-size: 14px;
+    font-weight: bold;
+    color: #995000;
+}
+.window-close-btn:hover {
+    background: #e04440;
+}
+.window-minimize-btn:hover {
+    background: #dea123;
+}
+/* 主控台的連線區域 */
+#ssh-connection {
+    margin-bottom: 10px;
+    padding: 10px;
+    background-color: #2a2a2a;
+}
+#ssh-connection input, #ssh-connection select {
+    margin-right: 5px;
+}
+
+/* xterm.js 容器 */
+.terminal-container {
+    background-color: #000;
+    flex-grow: 1; 
+    width: auto !important;
+    overflow: hidden;
+}
+
+/* --- 最小化狀態 --- */
+.terminal-window.minimized {
+    position: fixed !important; 
+    height: 38px; /* 剛好等於 header 高度 */
+    min-height: 38px;
+    width: 250px;
+    left: 20px !important;
+    /* 'bottom' 由 script.js 動態設定 */
+    top: auto !important;
+    transform: none !important; 
+    z-index: 1001 !important; 
+}
+
+/* 【【【 關鍵修復：移除了 .terminal-window.minimized.resizable 】】】 */
+.terminal-window.minimized .terminal-container,
+.terminal-window.minimized #ssh-connection {
+    /* 隱藏視窗內容 */
+    display: none;
+}
+
+.terminal-window.minimized .window-minimize-btn {
+    /* 將 '_' 變回 '+' (放大) */
+    content: '+';
+    line-height: 12px;
+    font-size: 14px;
 }

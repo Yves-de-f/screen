@@ -1,58 +1,116 @@
 // 檔案: static/js/script.js
 // 
-// 【【【 重構 7.0：導入 FitAddon 並淡化 Tmux Bar 】】】
+// 【【【 重構 12.0：修復「連線失敗時消失」的 Bug 】】】
 //
 
-// --- 1. 全域變數 (最小化) ---
+// --- 1. 全域變數 ---
 let isConnected = false;
 let socket = null;
-let onDataListener = null; // 用於 xterm.js 的 'onData'
+let globalZManager = 100;
 
-// 建立 Xterm 實例 (這在全域是安全的)
-const term = new Terminal();
-const fitAddon = new FitAddon.FitAddon(); // 【【【 新增：建立 FitAddon 】】】
+let terminalInstances = {};
+let activeTmuxTargets = {};
 
-// --- 2. 【【【 關鍵修復：等待 DOM 載入完成 】】】 ---
-// 
-// 只有當 HTML 頁面完全載入並解析後，才執行裡面的所有 JS
+// Debounce 輔助函數 (不變)
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func.apply(this, args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+
+// --- 2. 【【【 DOM 載入完成 】】】 ---
 document.addEventListener('DOMContentLoaded', (event) => {
 
-    // --- A. 獲取所有 UI 元素 ---
-    // (現在執行 getElementById 絕對安全)
-    const termContainer = document.getElementById('terminal');
-    term.loadAddon(fitAddon); // 【【【 新增：載入 Addon 】】】
-    term.open(termContainer);
+    // --- A. 獲取【主控台】UI 元素 ---
+    const masterTermContainer = document.getElementById('master-terminal');
+    const masterWindowElement = document.getElementById('master-terminal-window');
+    const mainTerm = new Terminal({ convertEol: true });
+    const mainFitAddon = new FitAddon.FitAddon();
+    mainTerm.loadAddon(mainFitAddon);
+    mainTerm.open(masterTermContainer);
+    
+    terminalInstances['master'] = {
+        term: mainTerm,
+        fitAddon: mainFitAddon,
+        element: masterWindowElement,
+        target_id: 'master'
+    };
+    
+    // (主控台的輸入綁定，不變)
+    mainTerm.onData(e => {
+        const masterInstance = Object.values(terminalInstances).find(inst => inst.target_id === 'master');
+        if (isConnected && masterInstance && masterInstance.pty_id && socket) {
+            socket.emit('pty_input', { pty_id: masterInstance.pty_id, input: e });
+        }
+    });
 
+    // 獲取其他靜態 UI 元素 (不變)
     const hostInput = document.getElementById('sshHost');
     const userInput = document.getElementById('sshUser');
     const connectBtn = document.getElementById('connectButton');
     const disconnectBtn = document.getElementById('disconnectButton');
     const commonHostsSelect = document.getElementById('commonHosts');
-
-    // TMUX 元素
     const tmuxNewNameInput = document.getElementById('tmuxNewName');
     const tmuxNewBtn = document.getElementById('tmuxNewButton');
     const tmuxListBtn = document.getElementById('tmuxListButton');
     const tmuxListDiv = document.getElementById('tmux-window-list');
-    const tmuxBar = document.getElementById('tmux-bar'); // 【【【 新增 】】】
+    const tmuxBar = document.getElementById('tmux-bar'); 
 
-    // --- B. 【【【 新的事件綁定 】】】 ---
+    // (最小化按鈕邏輯，不變)
+    const minimizeBtn = masterWindowElement.querySelector('.window-minimize-btn');
+    let isMasterMinimized = false;
+    let masterLastPosition = {}; 
+    minimizeBtn.addEventListener('click', () => {
+        isMasterMinimized = !isMasterMinimized;
+        if (isMasterMinimized) {
+            masterLastPosition = {
+                width: masterWindowElement.style.width,
+                height: masterWindowElement.style.height,
+                transform: masterWindowElement.style.transform
+            };
+            masterWindowElement.classList.add('minimized');
+            minimizeBtn.textContent = '+';
+            interact(masterWindowElement).draggable(false).resizable(false);
+            masterWindowElement.style.height = null; 
+            masterWindowElement.style.width = null;
+            const tmuxBarHeight = tmuxBar.getBoundingClientRect().height;
+            masterWindowElement.style.bottom = (tmuxBarHeight + 5) + 'px';
+        } else {
+            masterWindowElement.classList.remove('minimized');
+            minimizeBtn.textContent = '_';
+            masterWindowElement.style.width = masterLastPosition.width;
+            masterWindowElement.style.height = masterLastPosition.height;
+            masterWindowElement.style.transform = masterLastPosition.transform;
+            masterWindowElement.style.bottom = null;
+            interact(masterWindowElement).draggable(true).resizable(true);
+            setTimeout(() => mainFitAddon.fit(), 300); 
+        }
+    });
+
+    // --- B. 綁定靜態事件 (不變) ---
     commonHostsSelect.addEventListener('change', selectCommonHost);
     connectBtn.addEventListener('click', connectSSH);
     disconnectBtn.addEventListener('click', disconnectSSH);
-    
     tmuxNewBtn.addEventListener('click', tmuxNew);
     tmuxListBtn.addEventListener('click', tmuxList);
 
-    // --- C. 初始化 UI 狀態 ---
+    // --- C. 初始化 UI 狀態 (不變) ---
     disconnectBtn.disabled = true;
-    tmuxBar.classList.add('disabled'); // 【【【 新增：預設淡化 】】】
+    tmuxBar.classList.add('disabled');
+    mainFitAddon.fit();
 
-    // --- D. 綁定 Intereact.js (現在也是安全的) ---
-    initializeWindowing();
+    // --- D. 綁定【主控台】的視窗化 (不變) ---
+    initializeWindowing(masterWindowElement, mainFitAddon);
 
 
-    // --- E. 函數定義 (所有函數現在都在 DOMContentLoaded 內部) ---
+    // --- E. 函數定義 ---
 
     // --- Socket.IO 核心函數 ---
     function setupSocket() {
@@ -62,99 +120,117 @@ document.addEventListener('DOMContentLoaded', (event) => {
         socket = io(); 
 
         socket.on('connect', () => {
-            term.focus();
-            tmuxList(); // 連線後自動列出
-        });
-
-        // 處理 xterm.js 重複綁定
-        if (onDataListener) {
-            onDataListener.dispose();
-        }
-        onDataListener = term.onData(e => {
-            if (isConnected && socket) { 
-                socket.emit('ssh_input', {input: e});
-            }
-        });
-
-        // 監聽後端輸出
-        socket.on('ssh_output', data => {
-            term.write(data);
-            if (data.includes('[Connection closed')) {
-                setDisconnectedUI();
-            }
-            if (data.includes('[Already connected]')) {
-                setConnectedUI(); 
-            }
+            console.log('Socket connected, SID:', socket.id);
         });
         
-        // 監聽 Socket 斷線 (例如網路問題)
+        // (master_pty_created, 不變)
+        socket.on('master_pty_created', (data) => {
+            console.log('Master PTY created:', data.pty_id);
+            const masterInstance = terminalInstances['master'];
+            delete terminalInstances['master'];
+            masterInstance.pty_id = data.pty_id;
+            terminalInstances[data.pty_id] = masterInstance;
+            mainTerm.focus();
+            tmuxList();
+        });
+
+        // (sub_pty_created, 不變)
+        socket.on('sub_pty_created', (data) => {
+            console.log('Sub PTY created:', data);
+            createDraggableWindow(data.pty_id, data.target_id, data.title);
+        });
+
+        // (pty_output, 不變)
+        socket.on('pty_output', (data) => {
+            const pty_id = data.pty_id;
+            // 【【修改】】 確保 'master' key 也能被找到
+            const instance = terminalInstances[pty_id] || (pty_id === 'master' ? terminalInstances['master'] : null);
+            if (instance) {
+                instance.term.write(data.data);
+            } else {
+                console.warn(`Received output for unknown PTY: ${pty_id}`);
+            }
+        });
+
+        // (pty_closed, 不變)
+        socket.on('pty_closed', (data) => {
+            console.log('PTY closed by backend:', data.pty_id);
+            cleanupWindow(data.pty_id);
+        });
+        
+        // (disconnect, 不變)
         socket.on('disconnect', () => {
-            if (isConnected) {
-                term.write('\r\n\x1B[33m[Socket Disconnected]\x1B[0m\r\n');
-                setDisconnectedUI();
-            }
+            console.log('Socket disconnected');
+            setDisconnectedUI(); 
         });
         
-        // 監聽 TMUX UI 更新
-        socket.on('tmux_update', data => {
-            tmuxListDiv.innerHTML = ''; // 清空列表
-            
+        // (tmux_update, 不變)
+        socket.on('tmux_update', (data) => {
+            tmuxListDiv.innerHTML = ''; 
             if (data.windows && data.windows.length > 0) {
                 data.windows.forEach(win => {
                     const btn = document.createElement('button');
                     btn.className = 'tmux-window-btn';
                     btn.textContent = `${win.id}: ${win.name}`;
-                    // 點擊按鈕時，發送 "select" 指令
-                    btn.onclick = () => tmuxSelect(win.id);
+                    btn.onclick = () => launchTmuxWindow(win.id, win.name);
                     tmuxListDiv.appendChild(btn);
                 });
             } else {
                 tmuxListDiv.innerHTML = '<span>(No tmux windows found)</span>';
             }
         });
+
+        // 【【【 關鍵修復：監聽主 PTY 失敗事件 】】】
+        socket.on('master_pty_failed', (data) => {
+            console.warn("Master PTY failed to connect.", data.pty_id);
+            // 重置 UI 到「未連線」狀態，但不清除已有的視窗
+            isConnected = false;
+            hostInput.disabled = false;
+            userInput.disabled = false;
+            commonHostsSelect.disabled = false;
+            connectBtn.disabled = false;
+            disconnectBtn.disabled = true; // 禁用斷線
+            tmuxBar.classList.add('disabled'); // 禁用 tmux
+            
+            // 重置主控台的 pty_id
+            const masterInstance = terminalInstances[data.pty_id];
+            if (masterInstance) {
+                 delete terminalInstances[data.pty_id];
+                 masterInstance.pty_id = null;
+                 terminalInstances['master'] = masterInstance;
+            }
+        });
     }
 
-    // --- 連線/斷線 函數 ---
+    // --- 連線/斷線 函數 (不變) ---
     function connectSSH() {
         if (isConnected) {
-            term.write('\r\n\x1B[31m[錯誤: 已經連線中，請先斷線後再試。]\x1B[0m\r\n');
+            mainTerm.write('\r\n\x1B[31m[錯誤: 已經連線中。]\x1B[0m\r\n');
             return;
         }
-        
         const host = hostInput.value; 
         const user = userInput.value;
-        
         if (!host || !user) {
-            term.write('\r\n\x1B[31m[錯誤: Host 和 User 欄位皆為必填。]\x1B[0m\r\n');
+            mainTerm.write('\r\n\x1B[31m[錯誤: Host 和 User 欄位皆為必填。]\x1B[0m\r\n');
             return;
         }
-
-        setupSocket(); // 這會建立新 socket 並綁定所有監聽器
+        setupSocket(); 
         setConnectedUI();
-        term.reset(); 
-        term.write(`Connecting to ${user}@${host}...\r\n`);
+        mainTerm.reset(); 
+        mainTerm.write(`Connecting to ${user}@${host}...\r\n`);
         socket.emit('ssh_connect', {host, user});
-        term.focus();
+        mainTerm.focus();
     }
 
     function disconnectSSH() {
         if (socket) {
-            socket.disconnect();
-            socket = null; 
+            socket.emit('ssh_disconnect');
         }
-        if (onDataListener) {
-            onDataListener.dispose();
-            onDataListener = null;
-        }
-        tmuxListDiv.innerHTML = ''; // 清空 tmux 列表
-        term.write('\r\n\x1B[33m[User disconnected]\x1B[0m\r\n');
-        setDisconnectedUI();
     }
 
-    // --- 輔助函數 ---
+    // --- 輔助函數 (setConnectedUI, setDisconnectedUI 修改) ---
     function selectCommonHost() {
         if (isConnected) return; 
-        // commonHostsSelect 和 hostInput 都是安全的
         if(commonHostsSelect.value) {
             hostInput.value = commonHostsSelect.value;
         }
@@ -167,49 +243,160 @@ document.addEventListener('DOMContentLoaded', (event) => {
         commonHostsSelect.disabled = true;
         connectBtn.disabled = true;
         disconnectBtn.disabled = false;
-        tmuxBar.classList.remove('disabled'); // 【【【 新增：啟用 tmux bar 】】】
-
-        // 【【【 新增：連線後，立即 fit 一次 】】】
-        // (需要一點延遲，確保 CSS 渲染完成)
-        setTimeout(() => fitAddon.fit(), 100); 
+        tmuxBar.classList.remove('disabled');
+        setTimeout(() => mainFitAddon.fit(), 100); 
     }
 
     function setDisconnectedUI() {
         isConnected = false;
+        
+        // 關閉所有動態視窗
+        const all_pty_ids = Object.keys(terminalInstances);
+        for (const pty_id of all_pty_ids) {
+            const instance = terminalInstances[pty_id];
+            if (instance && instance.target_id !== 'master') {
+                instance.term.dispose();
+                instance.element.remove();
+                // delete terminalInstances[pty_id]; // (cleanupWindow 會處理)
+            }
+        }
+        
+        // 【【修改】】 重置主控台實例
+        const masterInstance = Object.values(terminalInstances).find(inst => inst.target_id === 'master');
+        terminalInstances = {}; // 清空
+        if (masterInstance) {
+             if (masterInstance.pty_id) {
+                 delete terminalInstances[masterInstance.pty_id];
+             }
+             masterInstance.pty_id = null;
+             terminalInstances['master'] = masterInstance;
+        }
+        
+        activeTmuxTargets = {}; // 清空 tmux 查找表
+
         hostInput.disabled = false;
         userInput.disabled = false;
         commonHostsSelect.disabled = false;
         connectBtn.disabled = false;
         disconnectBtn.disabled = true;
-        tmuxBar.classList.add('disabled'); // 【【【 新增：禁用 tmux bar 】】】
+        tmuxBar.classList.add('disabled');
+        tmuxListDiv.innerHTML = ''; 
+        mainTerm.write('\r\n\x1B[33m[All connections closed]\x1B[0m\r\n');
     }
 
-    // --- TMUX 函數 ---
+    // --- TMUX 函數 (不變) ---
     function tmuxList() {
         if (socket && isConnected) {
             socket.emit('tmux_control', { action: 'list' });
         }
     }
-
     function tmuxNew() {
         if (socket && isConnected) {
             const name = tmuxNewNameInput.value || 'new-window';
             socket.emit('tmux_control', { action: 'new', name: name });
-            tmuxNewNameInput.value = ''; // 清空
+            tmuxNewNameInput.value = '';
         }
     }
 
-    function tmuxSelect(targetId) {
-        if (socket && isConnected) {
-            socket.emit('tmux_control', { action: 'select', target: targetId });
-            term.focus();
+    // --- MDI 視窗管理 (不變) ---
+    
+    function launchTmuxWindow(target_id, title) {
+        const pty_id = activeTmuxTargets[target_id];
+        if (pty_id && terminalInstances[pty_id]) {
+            focusWindow(terminalInstances[pty_id].element);
+        } else {
+            mainTerm.write(`\r\n[Requesting PTY for ${title} (${target_id})...]\r\n`);
+            socket.emit('tmux_attach', { 
+                target_id: target_id, 
+                title: title 
+            });
+        }
+    }
+
+    function createDraggableWindow(pty_id, target_id, title) {
+        const windowEl = document.createElement('div');
+        windowEl.className = 'terminal-window dynamic-terminal-window';
+        
+        const x = 60 + (Math.random() * 200);
+        const y = 60 + (Math.random() * 200);
+        windowEl.style.transform = `translate(${x}px, ${y}px)`;
+        windowEl.setAttribute('data-x', x);
+        windowEl.setAttribute('data-y', y);
+
+        windowEl.innerHTML = `
+            <header class="window-header">
+                <span class="window-title">${target_id}: ${title}</span>
+                <button class="window-close-btn" aria-label="Close"></button>
+            </header>
+            <div class="terminal-container"></div>
+        `;
+        
+        const termContainer = windowEl.querySelector('.terminal-container');
+        document.body.appendChild(windowEl);
+        
+        const newTerm = new Terminal({ convertEol: true, rows: 15 });
+        const newFitAddon = new FitAddon.FitAddon();
+        newTerm.loadAddon(newFitAddon);
+        newTerm.open(termContainer);
+        newFitAddon.fit();
+        newTerm.focus();
+
+        newTerm.onData(e => {
+            if (socket) {
+                socket.emit('pty_input', { pty_id: pty_id, input: e });
+            }
+        });
+        
+        windowEl.querySelector('.window-close-btn').addEventListener('click', () => {
+            if (socket) {
+                socket.emit('pty_close', { pty_id: pty_id });
+            }
+            cleanupWindow(pty_id);
+        });
+
+        terminalInstances[pty_id] = {
+            term: newTerm,
+            fitAddon: newFitAddon,
+            element: windowEl,
+            target_id: target_id
+        };
+        activeTmuxTargets[target_id] = pty_id;
+
+        initializeWindowing(windowEl, newFitAddon);
+        focusWindow(windowEl);
+    }
+    
+    function cleanupWindow(pty_id) {
+        const instance = terminalInstances[pty_id];
+        if (instance) {
+            instance.term.dispose();
+            instance.element.remove();
+            delete activeTmuxTargets[instance.target_id];
+            delete terminalInstances[pty_id];
         }
     }
     
-    // --- 視窗化函數 ---
-    function initializeWindowing() {
-        // 拖曳 (Draggable)
-        interact('.draggable')
+    function focusWindow(element) {
+        if (element.id === 'master-terminal-window' && isMasterMinimized) {
+            minimizeBtn.click();
+        }
+        element.style.zIndex = globalZManager++;
+    }
+
+    // --- 視窗化 (Debounce 修復, 不變) ---
+    function initializeWindowing(element, fitAddon) {
+        
+        const debouncedFit = debounce(() => {
+            if (fitAddon && typeof fitAddon.fit === 'function') {
+                fitAddon.fit();
+            }
+        }, 150);
+
+        element.addEventListener('mousedown', () => {
+            focusWindow(element);
+        }, true);
+
+        interact(element)
           .draggable({
             inertia: true,
             modifiers: [
@@ -219,12 +406,16 @@ document.addEventListener('DOMContentLoaded', (event) => {
               })
             ],
             autoScroll: true,
-            allowFrom: '.window-header', // D只能從 header 拖曳
-            listeners: { move: dragMoveListener }
+            allowFrom: '.window-header',
+            listeners: { 
+                start: (e) => focusWindow(e.target),
+                move: dragMoveListener 
+            }
           });
 
         function dragMoveListener (event) {
           var target = event.target
+          if(target.classList.contains('minimized')) return;
           var x = (parseFloat(target.getAttribute('data-x')) || 0) + event.dx
           var y = (parseFloat(target.getAttribute('data-y')) || 0) + event.dy
           target.style.transform = 'translate(' + x + 'px, ' + y + 'px)'
@@ -232,18 +423,22 @@ document.addEventListener('DOMContentLoaded', (event) => {
           target.setAttribute('data-y', y)
         }
 
-        // 縮放 (Resizable)
-        interact('.resizable')
+        interact(element)
           .resizable({
             edges: { left: true, right: true, bottom: true, top: true },
             modifiers: [
               interact.modifiers.restrictEdges({ outer: 'parent' }),
               interact.modifiers.restrictSize({ min: { width: 400, height: 200 } })
             ],
-            inertia: true
+            inertia: true,
+            listeners: {
+                start: (e) => focusWindow(e.target)
+            }
           })
           .on('resizemove', function (event) {
             var target = event.target
+            if(target.classList.contains('minimized')) return;
+
             var x = (parseFloat(target.getAttribute('data-x')) || 0)
             var y = (parseFloat(target.getAttribute('data-y')) || 0)
 
@@ -256,13 +451,8 @@ document.addEventListener('DOMContentLoaded', (event) => {
             target.setAttribute('data-x', x)
             target.setAttribute('data-y', y)
             
-            // 【【【 關鍵修復：替換 resize(1,1) 】】】
-            // term.resize(1, 1); // <-- 刪除這一行
-            
-            // 【【【 改成呼叫 fitAddon.fit() 】】】
-            // 這會讓 xterm 自動計算新的行列數
-            fitAddon.fit();
+            debouncedFit();
           });
     }
 
-}); // --- 【【【 關鍵修復：DOM Ready 事件結束 】】】 ---
+}); // --- 【【【 DOM Ready 事件結束 】】】 ---
